@@ -1,0 +1,5 @@
+{
+  "name": "LocalBiz Scout AI",
+  "description": "An AI agent workflow that scouts local businesses, separating them by digital presence (Website vs. No Website) and extracting contact details.",
+  "requestFramePermissions": []
+}
