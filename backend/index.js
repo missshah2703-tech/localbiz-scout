@@ -85,6 +85,65 @@ app.get('/api/businesses', async (req, res) => {
       });
     }
 
+    // Optional: try to find missing websites using Gemini for higher coverage.
+    // This step will NEVER be 100% perfect, but can upgrade some "no website" businesses
+    // when Gemini confidently finds an official site.
+    if (ai) {
+      for (const biz of detailResults) {
+        if (biz.website) continue;
+        try {
+          const prompt = `You are given a local business and its city. Your task is to find the official website URL for this exact business.
+
+Business name: ${biz.name}
+Category: ${biz.category}
+City/Location: ${location}
+
+Rules:
+- Only return a URL if you are confident it is the official website for this same business.
+- If there are multiple similar businesses, avoid guessing.
+- If you are not sure, use null.
+- Respond with ONLY valid JSON like this (no comments, no extra text):
+  { "website": "https://example.com" }
+- If not sure or no website, respond exactly:
+  { "website": null }`;
+
+          const gRes = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+              temperature: 0.1,
+            },
+          });
+
+          let text = gRes.text || '';
+          text = String(text).trim();
+
+          // Extract JSON object if wrapped in code fences
+          const matchObj = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+          if (matchObj && matchObj[1]) {
+            text = matchObj[1].trim();
+          }
+
+          let websiteFromAi = null;
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed === 'object' && typeof parsed.website === 'string') {
+              websiteFromAi = parsed.website.trim();
+            }
+          } catch {
+            console.warn('Gemini website parse failed for', biz.name);
+          }
+
+          if (websiteFromAi && websiteFromAi.startsWith('http')) {
+            biz.website = websiteFromAi;
+            biz.verificationNotes += ' | Website via Gemini (needs manual verification)';
+          }
+        } catch (e) {
+          console.warn('Gemini website lookup failed for', biz.name, e?.message || e);
+        }
+      }
+    }
+
     // Optional: enrich with social links using Gemini when website exists
     if (ai) {
       for (const biz of detailResults) {
