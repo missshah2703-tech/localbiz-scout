@@ -19,7 +19,8 @@ const App: React.FC = () => {
   const [params, setParams] = useState<SearchParams>({
     location: '',
     category: '',
-    limit: 0
+    // Google Maps usually returns up to ~60 results per search
+    limit: 60
   });
   
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(WorkflowStep.IDLE);
@@ -36,14 +37,14 @@ const App: React.FC = () => {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!params.location) return;
+    if (!params.location || !params.category) return;
 
     setWorkflowStep(WorkflowStep.SEARCHING_MAPS);
     setLogs([]); // Clear previous logs
     setBusinesses([]);
     
     addLog("Starting new scout workflow...", "action");
-    addLog(`Target: ${params.limit} ${params.category} businesses in ${params.location}.`, "info");
+    addLog(`Target: up to ${params.limit} ${params.category} businesses in ${params.location}. (Google limit)`, "info");
 
     try {
       const results = await searchBusinesses(
@@ -90,17 +91,16 @@ const App: React.FC = () => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-2">Configure Workflow</h2>
           <p className="text-slate-500 mb-6 text-sm">
-            Search Google Maps Places for local businesses and view/export structured business details.
+            <span className="text-xs text-slate-400">Note: Google Maps returns up to about 60 results per search.</span>
           </p>
-
-          <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div className="col-span-1 md:col-span-2">
               <div className="w-full">
                 <AutocompleteInput
                   label="Location (City, Area)"
                   value={params.location}
                   onChange={(val) => setParams(prev => ({ ...prev, location: val }))}
-                  placeholder="Enter city e.g. Austin, TX"
+                  placeholder="Enter area (e.g. Karama, Deira, Business Bay)"
                   disabled={isProcessing}
                   fetchSuggestions={fetchLocationSuggestions}
                 />
@@ -111,33 +111,11 @@ const App: React.FC = () => {
                 label="Business Category"
                 value={params.category}
                 onChange={(val) => setParams(prev => ({ ...prev, category: val }))}
-                placeholder="e.g. Plumbers"
+                placeholder="Enter business type (e.g. Restaurant, Real Estate)"
                 disabled={isProcessing}
                 staticSuggestions={COMMON_CATEGORIES}
                 fetchSuggestions={fetchCategorySuggestions}
               />
-            </div>
-            <div>
-               <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wide">Max Results</label>
-              <select
-                className="w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2.5 text-sm bg-white"
-                value={params.limit || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  const parsed = parseInt(val, 10);
-                  setParams(prev => ({ ...prev, limit: isNaN(parsed) ? 0 : parsed }));
-                }}
-                disabled={isProcessing}
-              >
-                <option value="" disabled>Select max results</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-                <option value={500}>500</option>
-                <option value={1000}>1000</option>
-              </select>
             </div>
             <div className="md:col-span-4 mt-2">
                <button
@@ -145,9 +123,7 @@ const App: React.FC = () => {
                 disabled={
                   isProcessing ||
                   !params.location ||
-                  !params.category ||
-                  !params.limit ||
-                  params.limit <= 0
+                  !params.category
                 }
                 className={`w-full md:w-auto px-6 py-2.5 rounded-md text-white font-medium shadow-sm transition-all flex items-center justify-center gap-2
                   ${isProcessing 
