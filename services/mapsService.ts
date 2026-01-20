@@ -101,6 +101,7 @@ export const searchBusinesses = async (
       longitude:
         typeof item.longitude === "number" ? item.longitude : null,
       image: item.image ?? null,
+      images: Array.isArray((item as any).images) ? (item as any).images : null,
       website:
         typeof item.website === "string" && item.website.trim() !== ""
           ? item.website.trim()

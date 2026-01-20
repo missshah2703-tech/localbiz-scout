@@ -23,6 +23,7 @@ export interface Business {
   latitude?: number | null;
   longitude?: number | null;
   image?: string | null;
+  images?: string[] | null;
   // Web presence & SEO
   website: string | null;
   socials: string[];

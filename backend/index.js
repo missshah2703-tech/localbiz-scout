@@ -235,8 +235,9 @@ app.get('/api/locations/autocomplete', async (req, res) => {
 
     const autoUrl = new URL('https://maps.googleapis.com/maps/api/place/autocomplete/json');
     autoUrl.searchParams.set('input', trimmed);
-    // Do not restrict to cities only so that countries, regions,
-    // cities, and areas like "Oman" are also suggested.
+    // Force results in English so Arabic/local scripts do not
+    // appear in CSV exports.
+    autoUrl.searchParams.set('language', 'en');
     autoUrl.searchParams.set('key', apiKey);
 
     const resp = await fetchWithTimeout(autoUrl, {}, 8000);
@@ -276,6 +277,7 @@ app.get('/api/categories/autocomplete', async (req, res) => {
 
     const textUrl = new URL('https://maps.googleapis.com/maps/api/place/textsearch/json');
     textUrl.searchParams.set('query', trimmed);
+    textUrl.searchParams.set('language', 'en');
     textUrl.searchParams.set('key', apiKey);
 
     const resp = await fetchWithTimeout(textUrl, {}, 10000);
@@ -381,6 +383,7 @@ app.get('/api/businesses', async (req, res) => {
     const textQuery = `${category} in ${location}`;
     const textUrl = new URL('https://maps.googleapis.com/maps/api/place/textsearch/json');
     textUrl.searchParams.set('query', textQuery);
+    textUrl.searchParams.set('language', 'en');
     textUrl.searchParams.set('key', apiKey);
 
     const textResp = await fetchWithTimeout(textUrl, {}, 10000);
@@ -402,6 +405,9 @@ app.get('/api/businesses', async (req, res) => {
         detailsUrl.searchParams.set('place_id', place.place_id);
         // Request richer fields so we can fill CSV columns
         detailsUrl.searchParams.set('fields', 'name,formatted_address,address_components,formatted_phone_number,website,types,geometry,photos,editorial_summary');
+        // Force details responses in English to avoid Arabic/local
+        // scripts in address pieces.
+        detailsUrl.searchParams.set('language', 'en');
         detailsUrl.searchParams.set('key', apiKey);
 
         const detailsResp = await fetchWithTimeout(detailsUrl, {}, 10000);
@@ -453,16 +459,19 @@ app.get('/api/businesses', async (req, res) => {
               .replace(/\b\w/g, (c) => c.toUpperCase())
           : null;
 
-        const photoRef =
-          Array.isArray(result.photos) && result.photos.length > 0
-            ? result.photos[0].photo_reference || null
-            : null;
+        const photosArray = Array.isArray(result.photos) ? result.photos : [];
+        const photoRefs = photosArray
+          .map((p) => p && p.photo_reference)
+          .filter(Boolean)
+          .slice(0, 5);
 
-        const imageUrl = photoRef
-          ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(
-              photoRef
-            )}&key=${apiKey}`
-          : place.icon || null;
+        const imageUrls = photoRefs.map((ref) =>
+          `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(
+            ref
+          )}&key=${apiKey}`
+        );
+
+        const imageUrl = imageUrls.length > 0 ? imageUrls[0] : place.icon || null;
 
         const description =
           result.editorial_summary && result.editorial_summary.overview
@@ -490,6 +499,7 @@ app.get('/api/businesses', async (req, res) => {
           latitude: locationGeo.lat ?? null,
           longitude: locationGeo.lng ?? null,
           image: imageUrl,
+          images: imageUrls.length > 0 ? imageUrls : null,
           website: result.website || null,
           socials: [],
           verificationNotes: 'Fetched from Google Places API',

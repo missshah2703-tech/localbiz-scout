@@ -42,9 +42,53 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
 
       const trimmed = value.trim();
 
-      // 1. Static suggestions: when provided, show the full list
-      // on focus (empty input) and filter client-side as the user types.
-      if (staticSuggestions.length > 0) {
+      // 1. Combined static + async suggestions:
+      //    - If staticSuggestions exist and input is empty, show full static list
+      //    - When user types, prefer async fetchSuggestions; if that returns
+      //      empty, fall back to filtered static list.
+      if (fetchSuggestions) {
+        if (!trimmed) {
+          if (staticSuggestions.length > 0) {
+            setSuggestions(staticSuggestions);
+          } else {
+            setSuggestions([]);
+          }
+          setLoading(false);
+          return;
+        }
+
+        const requestId = ++activeRequestIdRef.current;
+        setLoading(true);
+        try {
+          const results = await fetchSuggestions(trimmed);
+          let finalResults = results;
+
+          if ((!results || results.length === 0) && staticSuggestions.length > 0) {
+            const lowerVal = trimmed.toLowerCase();
+            finalResults = staticSuggestions.filter(item =>
+              item.toLowerCase().includes(lowerVal)
+            );
+          }
+
+          if (activeRequestIdRef.current === requestId && showSuggestions) {
+            setSuggestions(finalResults || []);
+          }
+        } catch (error) {
+          console.error("Error fetching suggestions", error);
+          // On error, still let user pick from filtered static suggestions
+          if (staticSuggestions.length > 0) {
+            const lowerVal = trimmed.toLowerCase();
+            const filtered = staticSuggestions.filter(item =>
+              item.toLowerCase().includes(lowerVal)
+            );
+            setSuggestions(filtered);
+          }
+        } finally {
+          if (activeRequestIdRef.current === requestId) {
+            setLoading(false);
+          }
+        }
+      } else if (staticSuggestions.length > 0) {
         const lowerVal = trimmed.toLowerCase();
         const filtered = !trimmed
           ? staticSuggestions
@@ -54,32 +98,7 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
         setSuggestions(filtered);
         setLoading(false);
       }
-      // 2. Async fetch suggestions (Google Maps, etc.)
-      else if (fetchSuggestions) {
-        // If value is empty or too short, clear suggestions
-        if (!trimmed || trimmed.length < 2) {
-          setSuggestions([]);
-          setLoading(false);
-          return;
-        }
-
-        const requestId = ++activeRequestIdRef.current;
-        setLoading(true);
-        try {
-          const results = await fetchSuggestions(trimmed);
-          // Only update if this is the latest request and dropdown still open
-          if (activeRequestIdRef.current === requestId && showSuggestions) {
-            setSuggestions(results);
-          }
-        } catch (error) {
-          console.error("Error fetching suggestions", error);
-        } finally {
-          if (activeRequestIdRef.current === requestId) {
-            setLoading(false);
-          }
-        }
-      }
-    }, 300); // 300ms debounce
+    }, 150); // 150ms debounce for snappier suggestions
 
     return () => clearTimeout(handler);
   }, [value, showSuggestions, staticSuggestions, fetchSuggestions]);

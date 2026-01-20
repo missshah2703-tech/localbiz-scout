@@ -113,6 +113,7 @@ const App: React.FC = () => {
                 onChange={(val) => setParams(prev => ({ ...prev, category: val }))}
                 placeholder="e.g. Plumbers"
                 disabled={isProcessing}
+                staticSuggestions={COMMON_CATEGORIES}
                 fetchSuggestions={fetchCategorySuggestions}
               />
             </div>

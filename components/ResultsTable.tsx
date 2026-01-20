@@ -46,7 +46,12 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ businesses }) => {
           {businesses.map((biz, index) => (
             <tr key={biz.id} className="hover:bg-gray-50 transition-colors">
               <td className="px-4 py-3 text-xs text-gray-500">{index + 1}</td>
-              <td className="px-4 py-3 font-medium text-gray-900">{biz.name}</td>
+              <td
+                className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate"
+                title={biz.name}
+              >
+                {biz.name}
+              </td>
               <td className="px-4 py-3 text-xs break-all">{biz.email || ""}</td>
               <td className="px-4 py-3">{biz.category}</td>
               <td className="px-4 py-3">{biz.subCategory || ""}</td>
@@ -67,9 +72,9 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ businesses }) => {
                     href={biz.website}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-blue-600 hover:text-blue-800 hover:underline text-xs break-all"
+                    className="text-blue-600 hover:text-blue-800 hover:underline text-xs"
                   >
-                    {biz.website}
+                    View Website
                   </a>
                 ) : (
                   ""
