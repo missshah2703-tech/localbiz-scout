@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { SearchParams, Business, WorkflowStep, ProcessingLog } from './types';
-import { searchBusinesses } from './services/geminiService';
+import { searchBusinesses, fetchLocationSuggestions, fetchCategorySuggestions } from './services/mapsService';
 import { LogViewer } from './components/LogViewer';
 import { ResultsTable } from './components/ResultsTable';
 import { AutocompleteInput } from './components/AutocompleteInput';
@@ -18,18 +18,13 @@ const COMMON_CATEGORIES = [
 const App: React.FC = () => {
   const [params, setParams] = useState<SearchParams>({
     location: '',
-    category: 'Restaurant',
-    limit: 10
+    category: '',
+    limit: 0
   });
   
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(WorkflowStep.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [activeTab, setActiveTab] = useState<'with-website' | 'no-website'>('with-website');
-
-  // Computed lists
-  const withWebsiteList = useMemo(() => businesses.filter(b => b.website), [businesses]);
-  const noWebsiteList = useMemo(() => businesses.filter(b => !b.website), [businesses]);
 
   const addLog = (message: string, type: ProcessingLog['type'] = 'info') => {
     setLogs(prev => [...prev, {
@@ -59,12 +54,9 @@ const App: React.FC = () => {
       );
 
       setBusinesses(results);
-      
-      const withWeb = results.filter(b => b.website).length;
-      const withoutWeb = results.filter(b => !b.website).length;
 
       addLog(`Workflow completed successfully.`, "success");
-      addLog(`Summary: ${withWeb} with website, ${withoutWeb} without.`, "success");
+      addLog(`Summary: found ${results.length} businesses.`, "success");
       setWorkflowStep(WorkflowStep.COMPLETED);
 
     } catch (error) {
@@ -84,10 +76,10 @@ const App: React.FC = () => {
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
               AI
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">LocalBiz Scout</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-800">LocalBizHunt</h1>
           </div>
           <div className="text-sm text-slate-500 hidden sm:block">
-            Powered by Google Gemini Maps Tool
+            Powered by Google Maps Places API
           </div>
         </div>
       </header>
@@ -98,22 +90,19 @@ const App: React.FC = () => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-2">Configure Workflow</h2>
           <p className="text-slate-500 mb-6 text-sm">
-            This agent will verify local business directories, separate businesses by digital presence, and attempt to find social media links.
+            Search Google Maps Places for local businesses and view/export structured business details.
           </p>
 
           <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div className="col-span-1 md:col-span-2">
               <div className="w-full">
-                <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wide">
-                  Location (City, Area)
-                </label>
-                <input
-                  type="text"
+                <AutocompleteInput
+                  label="Location (City, Area)"
                   value={params.location}
-                  onChange={(e) => setParams(prev => ({ ...prev, location: e.target.value }))}
+                  onChange={(val) => setParams(prev => ({ ...prev, location: val }))}
                   placeholder="Enter city e.g. Austin, TX"
                   disabled={isProcessing}
-                  className="w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2.5 text-sm"
+                  fetchSuggestions={fetchLocationSuggestions}
                 />
               </div>
             </div>
@@ -123,18 +112,23 @@ const App: React.FC = () => {
                 value={params.category}
                 onChange={(val) => setParams(prev => ({ ...prev, category: val }))}
                 placeholder="e.g. Plumbers"
-                staticSuggestions={COMMON_CATEGORIES}
                 disabled={isProcessing}
+                fetchSuggestions={fetchCategorySuggestions}
               />
             </div>
             <div>
                <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wide">Max Results</label>
               <select
                 className="w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2.5 text-sm bg-white"
-                value={params.limit}
-                onChange={(e) => setParams(prev => ({ ...prev, limit: parseInt(e.target.value) }))}
+                value={params.limit || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const parsed = parseInt(val, 10);
+                  setParams(prev => ({ ...prev, limit: isNaN(parsed) ? 0 : parsed }));
+                }}
                 disabled={isProcessing}
               >
+                <option value="" disabled>Select max results</option>
                 <option value={10}>10</option>
                 <option value={20}>20</option>
                 <option value={50}>50</option>
@@ -147,7 +141,13 @@ const App: React.FC = () => {
             <div className="md:col-span-4 mt-2">
                <button
                 type="submit"
-                disabled={isProcessing || !params.location}
+                disabled={
+                  isProcessing ||
+                  !params.location ||
+                  !params.category ||
+                  !params.limit ||
+                  params.limit <= 0
+                }
                 className={`w-full md:w-auto px-6 py-2.5 rounded-md text-white font-medium shadow-sm transition-all flex items-center justify-center gap-2
                   ${isProcessing 
                     ? 'bg-slate-400 cursor-not-allowed' 
@@ -179,31 +179,12 @@ const App: React.FC = () => {
         {businesses.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50">
-              <div className="flex bg-slate-200 p-1 rounded-lg">
-                <button
-                  onClick={() => setActiveTab('with-website')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    activeTab === 'with-website' 
-                      ? 'bg-white text-blue-600 shadow-sm' 
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  With Website <span className="ml-1 bg-slate-100 px-1.5 py-0.5 rounded-full text-xs border border-slate-300">{withWebsiteList.length}</span>
-                </button>
-                <button
-                   onClick={() => setActiveTab('no-website')}
-                   className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    activeTab === 'no-website' 
-                      ? 'bg-white text-red-600 shadow-sm' 
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  No Website <span className="ml-1 bg-slate-100 px-1.5 py-0.5 rounded-full text-xs border border-slate-300">{noWebsiteList.length}</span>
-                </button>
+              <div className="text-sm text-slate-700 font-medium">
+                Results: <span className="font-semibold">{businesses.length}</span> businesses
               </div>
 
               <button
-                onClick={() => exportToCSV(withWebsiteList, noWebsiteList)}
+                onClick={() => exportToCSV(businesses)}
                 className="text-sm flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-300 bg-white px-3 py-1.5 rounded-md hover:border-blue-300 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
@@ -212,12 +193,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="p-0">
-              {activeTab === 'with-website' && (
-                <ResultsTable businesses={withWebsiteList} type="with-website" />
-              )}
-              {activeTab === 'no-website' && (
-                <ResultsTable businesses={noWebsiteList} type="no-website" />
-              )}
+              <ResultsTable businesses={businesses} />
             </div>
           </div>
         )}

@@ -2,10 +2,32 @@ export interface Business {
   id: string;
   name: string;
   category: string;
+  // Extra business meta used mainly for CSV export
+  subCategory?: string | null;
+  description?: string | null;
+  // Full address plus decomposed parts
   address: string;
+  street?: string | null;
+  country?: string | null;
+  city?: string | null;
+  area?: string | null;
+  pincode?: string | null;
+  // Contacts
   phone: string;
+  email?: string | null;
+  contactPersonName?: string | null;
+  registrationNo?: string | null;
+  companyLandline?: string | null;
+  yearOfEstablishment?: string | null;
+  // Geo
+  latitude?: number | null;
+  longitude?: number | null;
+  image?: string | null;
+  // Web presence & SEO
   website: string | null;
   socials: string[];
+  seoScore?: number | null;
+  seoGrade?: 'good' | 'average' | 'poor' | null;
   verificationNotes?: string;
 }
 

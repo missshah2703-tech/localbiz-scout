@@ -22,6 +22,7 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(false);
+  const activeRequestIdRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,35 +40,43 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
       // If menu shouldn't be shown, do nothing
       if (!showSuggestions) return;
 
-      // If value is empty or too short, clear suggestions
-      if (!value || value.trim().length < 2) {
-        setSuggestions([]);
-        return;
-      }
+      const trimmed = value.trim();
 
-      // 1. Static suggestions filtering
+      // 1. Static suggestions: when provided, show the full list
+      // on focus (empty input) and filter client-side as the user types.
       if (staticSuggestions.length > 0) {
-        const lowerVal = value.toLowerCase();
-        const filtered = staticSuggestions.filter(item =>
-          item.toLowerCase().includes(lowerVal)
-        );
+        const lowerVal = trimmed.toLowerCase();
+        const filtered = !trimmed
+          ? staticSuggestions
+          : staticSuggestions.filter(item =>
+              item.toLowerCase().includes(lowerVal)
+            );
         setSuggestions(filtered);
-      } 
-      // 2. Async fetch suggestions
+        setLoading(false);
+      }
+      // 2. Async fetch suggestions (Google Maps, etc.)
       else if (fetchSuggestions) {
+        // If value is empty or too short, clear suggestions
+        if (!trimmed || trimmed.length < 2) {
+          setSuggestions([]);
+          setLoading(false);
+          return;
+        }
+
+        const requestId = ++activeRequestIdRef.current;
         setLoading(true);
-        // Clear previous suggestions while loading new ones to avoid confusion
-        setSuggestions([]); 
         try {
-          const results = await fetchSuggestions(value);
-          // Only update if component is still mounted and showing suggestions
-          if (showSuggestions) {
+          const results = await fetchSuggestions(trimmed);
+          // Only update if this is the latest request and dropdown still open
+          if (activeRequestIdRef.current === requestId && showSuggestions) {
             setSuggestions(results);
           }
         } catch (error) {
           console.error("Error fetching suggestions", error);
         } finally {
-          setLoading(false);
+          if (activeRequestIdRef.current === requestId) {
+            setLoading(false);
+          }
         }
       }
     }, 300); // 300ms debounce
@@ -81,9 +90,10 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
   };
 
   const handleFocus = () => {
-    if (value && value.length >= 2) {
-      setShowSuggestions(true);
-    }
+    // Always open the dropdown on focus; the effect
+    // will decide what to show (full static list or
+    // filtered/remote suggestions).
+    setShowSuggestions(true);
   };
 
   const handleSelect = (suggestion: string) => {
@@ -107,17 +117,9 @@ export const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
         autoComplete="off"
       />
       
-      {showSuggestions && (
+      {showSuggestions && suggestions.length > 0 && (
         <ul className="absolute z-[100] w-full bg-white border border-slate-200 rounded-md mt-1 shadow-xl max-h-60 overflow-y-auto">
-          {loading && (
-            <li className="px-4 py-2 text-sm text-slate-400 italic">Finding suggestions...</li>
-          )}
-          
-          {!loading && suggestions.length === 0 && value.length >= 2 && fetchSuggestions && (
-            <li className="px-4 py-2 text-sm text-slate-400 italic">No locations found</li>
-          )}
-
-          {!loading && suggestions.map((suggestion, index) => (
+          {suggestions.map((suggestion, index) => (
             <li
               key={index}
               onClick={() => handleSelect(suggestion)}

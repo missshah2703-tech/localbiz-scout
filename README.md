@@ -2,19 +2,19 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# Run LocalBizHunt (Google Maps only)
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1wlqnYBuiPKeB5roW3qPly9TMLD-aVli_
+This app uses the Google Maps Places API to find and analyze local businesses. There is no Gemini / GenAI dependency anymore.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js, a Google Maps Places API key
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Create [backend/.env](backend/.env) and set your Maps key:
+   `GOOGLE_MAPS_API_KEY=YOUR_PLACES_API_KEY_HERE`
+3. Start backend:
+   `cd backend && npm run dev`
+4. In another terminal, start frontend from project root:
    `npm run dev`

@@ -3,6 +3,30 @@ import { Business } from "../types";
 // Backend base URL for API calls
 const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || "http://localhost:4000";
 
+export const fetchLocationSuggestions = async (query: string): Promise<string[]> => {
+  try {
+    const url = new URL("/api/locations/autocomplete", API_BASE_URL);
+    url.searchParams.set("input", query);
+
+    const resp = await fetch(url.toString());
+
+    if (!resp.ok) {
+      console.error("Location autocomplete backend error status:", resp.status);
+      return [];
+    }
+
+    const data = (await resp.json()) as { suggestions?: string[] };
+    if (!data || !Array.isArray(data.suggestions)) {
+      return [];
+    }
+
+    return data.suggestions;
+  } catch (error) {
+    console.error("Location autocomplete error:", error);
+    return [];
+  }
+};
+
 export const searchBusinesses = async (
   location: string,
   category: string,
@@ -41,6 +65,10 @@ export const searchBusinesses = async (
         ? item.website.trim()
         : null,
       socials: Array.isArray(item.socials) ? item.socials : [],
+      seoScore: typeof (item as any).seoScore === 'number' ? (item as any).seoScore : null,
+      seoGrade: (item as any).seoGrade === 'good' || (item as any).seoGrade === 'average' || (item as any).seoGrade === 'poor'
+        ? (item as any).seoGrade
+        : null,
       verificationNotes: item.verificationNotes || (item as any).verification_notes || "Fetched from backend"
     }));
 
