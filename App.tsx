@@ -19,8 +19,8 @@ const App: React.FC = () => {
   const [params, setParams] = useState<SearchParams>({
     location: '',
     category: '',
-    // Google Maps usually returns up to ~60 results per search
-    limit: 60
+    // Backend deep search will try to fetch as many unique results as possible (technical cap on server)
+    limit: 600
   });
   
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(WorkflowStep.IDLE);
@@ -44,7 +44,7 @@ const App: React.FC = () => {
     setBusinesses([]);
     
     addLog("Starting new scout workflow...", "action");
-    addLog(`Target: up to ${params.limit} ${params.category} businesses in ${params.location}. (Google limit)`, "info");
+    addLog(`Deep GCC search for ${params.category} in ${params.location} (max unique results, no duplicates).`, "info");
 
     try {
       const results = await searchBusinesses(
@@ -91,7 +91,7 @@ const App: React.FC = () => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-2">Configure Workflow</h2>
           <p className="text-slate-500 mb-6 text-sm">
-            <span className="text-xs text-slate-400">Note: Google Maps returns up to about 60 results per search.</span>
+            <span className="text-xs text-slate-400">This tool runs a deep Google Maps grid search to capture the maximum unique businesses for your selected GCC city/area and category (duplicates are removed automatically).</span>
           </p>
           <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div className="col-span-1 md:col-span-2">

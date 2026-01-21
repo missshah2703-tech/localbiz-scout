@@ -61,7 +61,8 @@ export const searchBusinesses = async (
   onLog(`Calling backend API for location: ${location}...`);
 
   try {
-    const url = new URL("/api/businesses", API_BASE_URL);
+    // Use the deep search endpoint to get maximum, de-duplicated results
+    const url = new URL("/api/businesses/deep", API_BASE_URL);
     url.searchParams.set("location", location);
     url.searchParams.set("category", category);
     url.searchParams.set("limit", String(limit));
