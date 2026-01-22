@@ -1,5 +1,8 @@
 import { Business } from "../types";
 
+// Backend base URL used for image proxy links in CSV
+const BACKEND_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || "http://localhost:4300";
+
 // Export a flat list of businesses with the same columns
 // that you see in the UI table
 export const exportToCSV = (businesses: Business[]) => {
@@ -44,11 +47,14 @@ export const exportToCSV = (businesses: Business[]) => {
 
   const pushRow = (biz: Business) => {
     // Build a Google Maps URL for the location so that the
-    // exported CSV has a clickable location cell. Prefer
-    // latitude/longitude when available, otherwise fall back
-    // to the formatted address.
+    // exported CSV has a clickable location cell. Prefer the
+    // official place_id URL (more accurate pin), then fall back
+    // to latitude/longitude, then formatted address.
     let locationCell = "";
-    if (biz.latitude != null && biz.longitude != null) {
+    if (biz.id && biz.name) {
+      const query = biz.name;
+      locationCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&query_place_id=${encodeURIComponent(biz.id)}`;
+    } else if (biz.latitude != null && biz.longitude != null) {
       const query = `${biz.latitude},${biz.longitude}`;
       locationCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
     } else if (biz.address) {
@@ -57,6 +63,27 @@ export const exportToCSV = (businesses: Business[]) => {
 
     const imageList = [biz.image, ...(biz.images || [])]
       .filter((v): v is string => !!v);
+
+    // For the Image column we prefer to open just the photo.
+    // If we have a Google Place photo_reference in the URL,
+    // point to our backend proxy /api/place-photo so the
+    // browser gets the image directly (no API key issues).
+    let imageCell = "";
+    const firstImageUrl = imageList[0];
+    if (firstImageUrl) {
+      const match = /photo_reference=([^&]+)/.exec(firstImageUrl);
+      if (match && match[1]) {
+        const photoRef = decodeURIComponent(match[1]);
+        imageCell = `${BACKEND_BASE_URL}/api/place-photo?photo_reference=${encodeURIComponent(photoRef)}&maxwidth=800`;
+      }
+    }
+
+    // Fallback: if no real photo, link to the place page so
+    // user can still see images there.
+    if (!imageCell && biz.id && biz.name) {
+      const query = biz.name;
+      imageCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&query_place_id=${encodeURIComponent(biz.id)}`;
+    }
 
     rows.push([
       counter.toString(),
@@ -79,7 +106,7 @@ export const exportToCSV = (businesses: Business[]) => {
       escape(biz.yearOfEstablishment ?? null),
       biz.latitude != null ? String(biz.latitude) : "",
       biz.longitude != null ? String(biz.longitude) : "",
-      escape(imageList.length > 0 ? imageList.join(" | ") : null)
+      escape(imageCell || (imageList.length > 0 ? imageList.join(" | ") : null))
     ].join(","));
     counter += 1;
   };

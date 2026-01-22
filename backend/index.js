@@ -366,6 +366,11 @@ async function fetchBusinessDetailsForPlaces(places, category) {
   const detailResults = [];
 
   const detailPromises = places.map(async (place) => {
+    let result = null;
+
+    // First, try to fetch full details. If this fails or returns a
+    // non-OK status, we will still fall back to building a business
+    // record from the basic search result so we don't lose data.
     try {
       const detailsUrl = new URL('https://maps.googleapis.com/maps/api/place/details/json');
       detailsUrl.searchParams.set('place_id', place.place_id);
@@ -376,17 +381,22 @@ async function fetchBusinessDetailsForPlaces(places, category) {
       detailsUrl.searchParams.set('language', 'en');
       detailsUrl.searchParams.set('key', apiKey);
 
-      const detailsResp = await fetchWithTimeout(detailsUrl, {}, 10000);
+      // Details calls can be slow when we fetch hundreds of
+      // places, so allow a longer timeout here.
+      const detailsResp = await fetchWithTimeout(detailsUrl, {}, 30000);
       const detailsData = await detailsResp.json();
 
       if (detailsData.status !== 'OK') {
         console.warn('Places details error for', place.place_id, detailsData.status);
-        return null;
+      } else {
+        result = detailsData.result || {};
       }
+    } catch (e) {
+      console.warn('Places details fetch failed for', place.place_id, e?.message || e);
+    }
 
-      const result = detailsData.result || {};
-
-      const addressComponents = Array.isArray(result.address_components)
+    try {
+      const addressComponents = Array.isArray(result?.address_components)
         ? result.address_components
         : [];
 
@@ -404,28 +414,41 @@ async function fetchBusinessDetailsForPlaces(places, category) {
       const area = getAddressPart('sublocality') || getAddressPart('sublocality_level_1');
       const pincode = getAddressPart('postal_code');
 
-      const locationGeo =
-        result.geometry && result.geometry.location
-          ? {
-              lat: typeof result.geometry.location.lat === 'function'
-                ? result.geometry.location.lat()
-                : result.geometry.location.lat,
-              lng: typeof result.geometry.location.lng === 'function'
-                ? result.geometry.location.lng()
-                : result.geometry.location.lng,
-            }
-          : { lat: null, lng: null };
+      let locationGeo = { lat: null, lng: null };
+      if (result && result.geometry && result.geometry.location) {
+        locationGeo = {
+          lat: typeof result.geometry.location.lat === 'function'
+            ? result.geometry.location.lat()
+            : result.geometry.location.lat,
+          lng: typeof result.geometry.location.lng === 'function'
+            ? result.geometry.location.lng()
+            : result.geometry.location.lng,
+        };
+      } else if (place.geometry && place.geometry.location) {
+        locationGeo = {
+          lat: typeof place.geometry.location.lat === 'function'
+            ? place.geometry.location.lat()
+            : place.geometry.location.lat,
+          lng: typeof place.geometry.location.lng === 'function'
+            ? place.geometry.location.lng()
+            : place.geometry.location.lng,
+        };
+      }
 
-      const primaryType = Array.isArray(result.types)
+      const primaryType = Array.isArray(result?.types)
         ? result.types.find((t) => !!t)
-        : null;
+        : (Array.isArray(place.types) ? place.types.find((t) => !!t) : null);
+
       const subCategory = primaryType
         ? primaryType
             .replace(/_/g, ' ')
             .replace(/\b\w/g, (c) => c.toUpperCase())
         : null;
 
-      const photosArray = Array.isArray(result.photos) ? result.photos : [];
+      const photosArray = Array.isArray(result?.photos)
+        ? result.photos
+        : (Array.isArray(place.photos) ? place.photos : []);
+
       const photoRefs = photosArray
         .map((p) => p && p.photo_reference)
         .filter(Boolean)
@@ -440,42 +463,54 @@ async function fetchBusinessDetailsForPlaces(places, category) {
       const imageUrl = imageUrls.length > 0 ? imageUrls[0] : place.icon || null;
 
       const description =
-        result.editorial_summary && result.editorial_summary.overview
+        (result && result.editorial_summary && result.editorial_summary.overview
           ? result.editorial_summary.overview
-          : null;
+          : null) || place.vicinity || null;
 
       const baseBiz = {
         id: place.place_id,
-        name: result.name || place.name || 'Unknown Business',
+        name: (result && result.name) || place.name || 'Unknown Business',
         category: category,
         subCategory,
         description,
-        address: result.formatted_address || place.formatted_address || 'No address listed',
+        address:
+          (result && result.formatted_address) ||
+          place.formatted_address ||
+          place.vicinity ||
+          'No address listed',
         street,
         country,
         city,
         area,
         pincode,
-        phone: result.formatted_phone_number || 'N/A',
+        phone:
+          (result && result.formatted_phone_number) ||
+          place.formatted_phone_number ||
+          'N/A',
         email: null,
         contactPersonName: null,
         registrationNo: null,
-        companyLandline: result.formatted_phone_number || 'N/A',
+        companyLandline:
+          (result && result.formatted_phone_number) ||
+          place.formatted_phone_number ||
+          'N/A',
         yearOfEstablishment: null,
         latitude: locationGeo.lat ?? null,
         longitude: locationGeo.lng ?? null,
         image: imageUrl,
         images: imageUrls.length > 0 ? imageUrls : null,
-        website: result.website || null,
+        website: (result && result.website) || place.website || null,
         socials: [],
-        verificationNotes: 'Fetched from Google Places API',
+        verificationNotes: result
+          ? 'Fetched from Google Places API (details)'
+          : 'Fetched from Google Places API (search fallback)',
         seoScore: null,
         seoGrade: null
       };
 
       return baseBiz;
-    } catch (e) {
-      console.warn('Places details fetch failed for', place.place_id, e?.message || e);
+    } catch (e2) {
+      console.warn('Failed to build business object for', place.place_id, e2?.message || e2);
       return null;
     }
   });
@@ -492,7 +527,7 @@ async function fetchBusinessDetailsForPlaces(places, category) {
 
 // Deep search endpoint: use geocoding + grid of Nearby Search around a city/area
 app.get('/api/businesses/deep', async (req, res) => {
-  const { location, category } = req.query;
+  const { location, category, limit } = req.query;
 
   if (!location || !category) {
     return res.status(400).json({ error: 'location and category are required query params' });
@@ -529,12 +564,40 @@ app.get('/api/businesses/deep', async (req, res) => {
     const centerLat = centerLocation.lat;
     const centerLng = centerLocation.lng;
 
-    // 2) Build a simple grid of lat/lng points around the center
-    // Configurable grid density and search radius (wider & denser for more coverage)
-    const GRID_STEPS = 5; // 5x5 grid (25 points)
-    const GRID_RADIUS_METERS = 8000; // 8km radius for each Nearby Search circle
-    const MAX_TOTAL_RESULTS = 600; // overall cap of unique places for deep search
-    const MAX_PAGES_PER_POINT = 3; // Nearby Search allows up to 3 pages
+    // Determine desired max results from optional "limit" query
+    // (frontend sends e.g. 600). This controls how heavy the grid
+    // search should be so normal UI searches stay reasonably fast
+    // while crawler/batch jobs can still push higher.
+    let requestedLimit = 7000;
+    if (typeof limit === 'string') {
+      const parsed = Number(limit);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        requestedLimit = parsed;
+      }
+    }
+
+    // Hard cap on total results regardless of requested limit
+    const MAX_TOTAL_RESULTS = Math.min(Math.max(Math.floor(requestedLimit), 50), 7000);
+
+    // 2) Build a simple grid of lat/lng points around the center.
+    // We dynamically adjust grid density and radius depending on
+    // how many results are requested so that interactive searches
+    // (limit ~600) are lighter and faster than full deep crawls.
+    let GRID_STEPS = 5; // default 5x5 grid
+    let GRID_RADIUS_METERS = 8000; // default 8km
+    let MAX_PAGES_PER_POINT = 3; // Nearby Search allows up to 3 pages
+
+    if (MAX_TOTAL_RESULTS <= 800) {
+      // Light mode: metro/area-level quick scan
+      GRID_STEPS = 3; // 3x3 grid
+      GRID_RADIUS_METERS = 6000; // 6km radius
+      MAX_PAGES_PER_POINT = 2;
+    } else if (MAX_TOTAL_RESULTS >= 3000) {
+      // Heavy mode: wide coverage for crawler / big searches
+      GRID_STEPS = 7; // 7x7 grid (49 points)
+      GRID_RADIUS_METERS = 10000; // 10km radius
+      MAX_PAGES_PER_POINT = 3;
+    }
 
     const metersPerDegLat = 111320; // approx
     const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180);
@@ -555,56 +618,137 @@ app.get('/api/businesses/deep', async (req, res) => {
 
     const allPlacesMap = new Map(); // place_id -> nearby search result
 
-    // 3) For each grid point, run Nearby Search with pagination and
-    // accumulate unique places up to MAX_TOTAL_RESULTS
-    for (const point of gridPoints) {
+    // Build multiple keyword variants to widen coverage for
+    // popular categories like Restaurants, Schools, etc.
+    const keywordSet = new Set();
+    keywordSet.add(trimmedCategory);
+    const catLc = trimmedCategory.toLowerCase();
+
+    if (catLc.includes('restaurant')) {
+      [
+        'restaurant',
+        'fast food restaurant',
+        'fast food',
+        'cafe',
+        'coffee shop',
+        'dining',
+        'family restaurant',
+        'grill restaurant',
+        'pizza restaurant',
+        'burger restaurant',
+      ].forEach((k) => keywordSet.add(k));
+    }
+    if (catLc.includes('cafe')) {
+      [
+        'cafe',
+        'coffee shop',
+        'coffee',
+        'tea house',
+        'bakery',
+        'restaurant',
+      ].forEach((k) => keywordSet.add(k));
+    }
+    if (catLc.includes('school')) {
+      [
+        'school',
+        'primary school',
+        'secondary school',
+        'high school',
+        'academy',
+        'college',
+        'university',
+        'institute',
+        'training center',
+      ].forEach((k) => keywordSet.add(k));
+    }
+    if (catLc.includes('clothing') || catLc.includes('fashion') || catLc.includes('apparel')) {
+      [
+        'clothing store',
+        'fashion store',
+        'garments shop',
+        'boutique',
+        'mens clothing store',
+        'womens clothing store',
+        'kids clothing store',
+      ].forEach((k) => keywordSet.add(k));
+    }
+    if (catLc.includes('supermarket') || catLc.includes('grocery')) {
+      [
+        'supermarket',
+        'grocery store',
+        'hypermarket',
+        'mini mart',
+        'convenience store',
+        'department store',
+      ].forEach((k) => keywordSet.add(k));
+    }
+    if (catLc.includes('salon') || catLc.includes('beauty')) {
+      [
+        'beauty salon',
+        'hair salon',
+        'barbershop',
+        'spa',
+        'nail salon',
+        'beauty parlour',
+      ].forEach((k) => keywordSet.add(k));
+    }
+
+    const keywordVariants = Array.from(keywordSet);
+
+    // 3) For each keyword and grid point, run Nearby Search with
+    // pagination and accumulate unique places up to MAX_TOTAL_RESULTS
+    for (const keyword of keywordVariants) {
       if (allPlacesMap.size >= MAX_TOTAL_RESULTS) break;
 
-      let pageToken = null;
-      let pageCount = 0;
+      for (const point of gridPoints) {
+        if (allPlacesMap.size >= MAX_TOTAL_RESULTS) break;
 
-      while (pageCount < MAX_PAGES_PER_POINT && allPlacesMap.size < MAX_TOTAL_RESULTS) {
-        const nearbyUrl = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
+        let pageToken = null;
+        let pageCount = 0;
 
-        nearbyUrl.searchParams.set('location', `${point.lat},${point.lng}`);
-        nearbyUrl.searchParams.set('radius', String(GRID_RADIUS_METERS));
-        nearbyUrl.searchParams.set('keyword', trimmedCategory);
-        nearbyUrl.searchParams.set('language', 'en');
-        nearbyUrl.searchParams.set('key', apiKey);
+        while (pageCount < MAX_PAGES_PER_POINT && allPlacesMap.size < MAX_TOTAL_RESULTS) {
+          const nearbyUrl = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
 
-        if (pageToken) {
-          nearbyUrl.searchParams.set('pagetoken', pageToken);
-          // next_page_token requires a short delay before it becomes valid
-          await sleep(2000);
-        }
+          nearbyUrl.searchParams.set('location', `${point.lat},${point.lng}`);
+          nearbyUrl.searchParams.set('radius', String(GRID_RADIUS_METERS));
+          nearbyUrl.searchParams.set('keyword', keyword);
+          nearbyUrl.searchParams.set('language', 'en');
+          nearbyUrl.searchParams.set('key', apiKey);
 
-        const nearbyResp = await fetchWithTimeout(nearbyUrl, {}, 10000);
-        const nearbyData = await nearbyResp.json();
-
-        if (nearbyData.status === 'INVALID_REQUEST' && pageToken) {
-          // next_page_token not ready yet; wait a bit and retry this page once
-          await sleep(2000);
-          continue;
-        }
-
-        if (nearbyData.status !== 'OK' && nearbyData.status !== 'ZERO_RESULTS') {
-          console.error('Nearby Search error (deep):', nearbyData.status, nearbyData.error_message || '');
-          break;
-        }
-
-        const results = Array.isArray(nearbyData.results) ? nearbyData.results : [];
-        for (const place of results) {
-          if (!place || !place.place_id) continue;
-          if (!allPlacesMap.has(place.place_id)) {
-            allPlacesMap.set(place.place_id, place);
+          if (pageToken) {
+            nearbyUrl.searchParams.set('pagetoken', pageToken);
+            // next_page_token requires a short delay before it becomes valid
+            await sleep(2000);
           }
-        }
 
-        if (nearbyData.next_page_token && results.length > 0) {
-          pageToken = nearbyData.next_page_token;
-          pageCount += 1;
-        } else {
-          break;
+          const nearbyResp = await fetchWithTimeout(nearbyUrl, {}, 10000);
+          const nearbyData = await nearbyResp.json();
+
+          if (nearbyData.status === 'INVALID_REQUEST' && pageToken) {
+            // next_page_token not ready yet; wait a bit and retry this page once
+            await sleep(2000);
+            continue;
+          }
+
+          if (nearbyData.status !== 'OK' && nearbyData.status !== 'ZERO_RESULTS') {
+            console.error('Nearby Search error (deep):', nearbyData.status, nearbyData.error_message || '');
+            break;
+          }
+
+          const results = Array.isArray(nearbyData.results) ? nearbyData.results : [];
+          for (const place of results) {
+            if (!place || !place.place_id) continue;
+            if (!allPlacesMap.has(place.place_id)) {
+              allPlacesMap.set(place.place_id, place);
+            }
+          }
+
+          if (nearbyData.next_page_token && results.length > 0) {
+            pageToken = nearbyData.next_page_token;
+            pageCount += 1;
+          } else {
+            break;
+          }
         }
       }
     }
@@ -615,6 +759,43 @@ app.get('/api/businesses/deep', async (req, res) => {
     res.json(detailResults);
   } catch (err) {
     console.error('Backend /api/businesses/deep error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy endpoint to fetch a single Place photo image.
+// This lets CSV "Image" links open just the image without
+// exposing the API key or depending on referrer restrictions.
+app.get('/api/place-photo', async (req, res) => {
+  const { photo_reference, maxwidth } = req.query;
+
+  if (!photo_reference || typeof photo_reference !== 'string') {
+    return res.status(400).json({ error: 'photo_reference query param is required' });
+  }
+
+  if (!apiKey) {
+    return res.status(500).json({ error: 'GOOGLE_MAPS_API_KEY is not configured on the server' });
+  }
+
+  try {
+    const photoUrl = new URL('https://maps.googleapis.com/maps/api/place/photo');
+    photoUrl.searchParams.set('photo_reference', photo_reference);
+    photoUrl.searchParams.set('maxwidth', String(maxwidth || 800));
+    photoUrl.searchParams.set('key', apiKey);
+
+    const photoResp = await fetchWithTimeout(photoUrl, { redirect: 'follow' }, 15000);
+
+    const contentType = photoResp.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+
+    res.status(photoResp.status);
+    if (photoResp.body) {
+      photoResp.body.pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.error('Backend /api/place-photo error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

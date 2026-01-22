@@ -180,7 +180,10 @@ function businessesToCsv(businesses) {
   for (const biz of businesses) {
     // Build Google Maps URL for clickable location cell
     let locationCell = '';
-    if (biz.latitude != null && biz.longitude != null) {
+    if (biz.id && biz.name) {
+      const query = biz.name;
+      locationCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&query_place_id=${encodeURIComponent(biz.id)}`;
+    } else if (biz.latitude != null && biz.longitude != null) {
       const query = `${biz.latitude},${biz.longitude}`;
       locationCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
     } else if (biz.address) {
@@ -188,6 +191,26 @@ function businessesToCsv(businesses) {
     }
 
     const imageList = [biz.image, ...(biz.images || [])].filter((v) => !!v);
+
+    // For the Image column, prefer a direct photo via our
+    // backend proxy /api/place-photo when photo_reference is
+    // present in the URL.
+    let imageCell = '';
+    const firstImageUrl = imageList[0];
+    if (firstImageUrl) {
+      const match = /photo_reference=([^&]+)/.exec(firstImageUrl);
+      if (match && match[1]) {
+        const photoRef = decodeURIComponent(match[1]);
+        imageCell = `${API_BASE_URL}/api/place-photo?photo_reference=${encodeURIComponent(photoRef)}&maxwidth=800`;
+      }
+    }
+
+    // Fallback: if no real photo, link to the place page so
+    // user can still see any images there.
+    if (!imageCell && biz.id && biz.name) {
+      const query = biz.name;
+      imageCell = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&query_place_id=${encodeURIComponent(biz.id)}`;
+    }
 
     const row = [
       String(counter),
@@ -210,7 +233,7 @@ function businessesToCsv(businesses) {
       escapeCsv(biz.yearOfEstablishment ?? null),
       biz.latitude != null ? String(biz.latitude) : '',
       biz.longitude != null ? String(biz.longitude) : '',
-      escapeCsv(imageList.length > 0 ? imageList.join(' | ') : null),
+      escapeCsv(imageCell || (imageList.length > 0 ? imageList.join(' | ') : null)),
     ].join(',');
 
     rows.push(row);
